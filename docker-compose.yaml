@@ -1,0 +1,39 @@
+# Layer = INfrastructure (Local Orchestration)
+
+# Defines the three services required to run campaign-dispatcher locally or in a containerised environment.
+# The same Dockerfile is built once and shared by both the 'api' and 'worker' services which differ only in the 'command:'' override that selects which compiled entry point to run.
+
+# Both 'api' and 'worker' declare 'depends_on: [redis]'', so Compose starts the redis container first.
+# Note: depends_on only waits for the container to start, not for Redis to be ready to accept connections.
+# For production use, add a healthcheck and 'condition: service_healthy'.
+
+version: "3.9"
+
+services:
+  # ----- api -----
+  # - The HTTP server process. Accepts POST /campaigns, enqueues jobs to Redis, and returns 202 immediately. Exposes port 3001 on the host.
+  api:
+    build: . # Build from the Dockerfile in the project root.
+    command: node dist/index.js # Overrides the Dockerfile CMD to start the API entry point.
+    ports: ["3001:3001"] # Maps host port 3001 to container port 3001.
+    environment:
+      REDIS_HOST: redis # Overrides the default "localhost" — must match the service name below.
+    depends_on: [redis]
+
+  # ----- worker -----
+  # - The queue consumer process. Reads jobs from Redis via Bull and dispatches them to the appropriate delivery adapter.
+  # - No port is exposed because the worker only communicates outbound (to Redis and to provider APIs).
+  worker:
+    build: . # Same image as 'api' - the command override selects the worker entry point.
+    command: node dist/worker.js # Overrides the Dockerfile CMD to start the worker entry point.
+    environment:
+      REDIS_HOST: redis # Must match the redis service name so Bull connects to the right host.
+    depends_on: [redis]
+
+  # ----- redis -----
+  # The Bull job queue backing store. Provides durability (jobs survive process restarts) and enables multiple worker instances to consume from the same queue.
+  # Uses the official lightweight Alpine-based image.
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
